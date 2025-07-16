@@ -10,6 +10,7 @@ import (
 
 	"github.com/mush1e/netmon-stack/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 type server struct {
@@ -24,34 +25,59 @@ type server struct {
 func (s *server) Subscribe(req *proto.SubscribeRequest, stream proto.NetworkTelemetry_SubscribeServer) error {
 	nameSlice := strings.Split(req.InterfaceName, ":")
 	if len(nameSlice) != 2 {
-		return errors.New("invalid name, format should be DEVICE:INTERFACE")
+		return stream.Send(&proto.SubscribeResponse{
+			Response: &proto.SubscribeResponse_Error{
+				Error: &proto.Error{
+					Code:    proto.ErrorCode_DOES_NOT_EXIST,
+					Message: "invalid interface name format; expected DEVICE:INTERFACE",
+				},
+			},
+			ResponseTimestamp: time.Now().UnixMilli(),
+		})
 	}
+
 	deviceName := nameSlice[0]
 	ifaceName := nameSlice[1]
 
 	device := s.getDevice(deviceName)
 	if device == nil {
-		return errors.New("device with name: " + deviceName + " does not exist")
+		return stream.Send(&proto.SubscribeResponse{
+			Response: &proto.SubscribeResponse_Error{
+				Error: &proto.Error{
+					Code:    proto.ErrorCode_DOES_NOT_EXIST,
+					Message: "device '" + deviceName + "' not found",
+				},
+			},
+			ResponseTimestamp: time.Now().UnixMilli(),
+		})
 	}
 
 	interval := time.Duration(req.IntervalMs) * time.Millisecond
 	if interval <= 0 {
-		interval = 1000 * time.Millisecond // default to 1s if not specified or invalid
+		interval = 1000 * time.Millisecond // default to 1s
 	}
 
 	switch req.Mode {
 	case proto.SubscriptionMode_ONCE:
 		ifaceCounters, err := device.GetCounters(ifaceName)
 		if err != nil {
-			return err
+			return stream.Send(&proto.SubscribeResponse{
+				Response: &proto.SubscribeResponse_Error{
+					Error: &proto.Error{
+						Code:    proto.ErrorCode_NOT_ACTIVE,
+						Message: "failed to get counters for interface '" + ifaceName + "': " + err.Error(),
+					},
+				},
+				ResponseTimestamp: time.Now().UnixMilli(),
+			})
 		}
-		resp := &proto.SubscribeResponse{
+
+		return stream.Send(&proto.SubscribeResponse{
 			Response: &proto.SubscribeResponse_Counters{
 				Counters: ifaceCounters,
 			},
 			ResponseTimestamp: time.Now().UnixMilli(),
-		}
-		return stream.Send(resp)
+		})
 
 	case proto.SubscriptionMode_STREAM:
 		for {
@@ -61,26 +87,52 @@ func (s *server) Subscribe(req *proto.SubscribeRequest, stream proto.NetworkTele
 			default:
 				ifaceCounters, err := device.GetCounters(ifaceName)
 				if err != nil {
-					return err
+					_ = stream.Send(&proto.SubscribeResponse{
+						Response: &proto.SubscribeResponse_Error{
+							Error: &proto.Error{
+								Code:    proto.ErrorCode_NOT_ACTIVE,
+								Message: "stream error getting counters for '" + ifaceName + "': " + err.Error(),
+							},
+						},
+						ResponseTimestamp: time.Now().UnixMilli(),
+					})
+					return nil // End stream on error
 				}
-				resp := &proto.SubscribeResponse{
+
+				if err := stream.Send(&proto.SubscribeResponse{
 					Response: &proto.SubscribeResponse_Counters{
 						Counters: ifaceCounters,
 					},
 					ResponseTimestamp: time.Now().UnixMilli(),
-				}
-				if err := stream.Send(resp); err != nil {
+				}); err != nil {
 					return err
 				}
+
 				time.Sleep(interval)
 			}
 		}
 
 	case proto.SubscriptionMode_POLL:
-		return errors.New("POLL mode not implemented")
+		return stream.Send(&proto.SubscribeResponse{
+			Response: &proto.SubscribeResponse_Error{
+				Error: &proto.Error{
+					Code:    proto.ErrorCode_NOT_ACTIVE,
+					Message: "POLL mode is not implemented yet",
+				},
+			},
+			ResponseTimestamp: time.Now().UnixMilli(),
+		})
 
 	default:
-		return errors.New("invalid subscription mode")
+		return stream.Send(&proto.SubscribeResponse{
+			Response: &proto.SubscribeResponse_Error{
+				Error: &proto.Error{
+					Code:    proto.ErrorCode_DOES_NOT_EXIST,
+					Message: "invalid subscription mode",
+				},
+			},
+			ResponseTimestamp: time.Now().UnixMilli(),
+		})
 	}
 }
 
@@ -140,6 +192,7 @@ func main() {
 
 	grpcServer := grpc.NewServer()
 	proto.RegisterNetworkTelemetryServer(grpcServer, srv)
+	reflection.Register(grpcServer)
 
 	log.Println("Starting gRPC server on :50051")
 	if err := grpcServer.Serve(listener); err != nil {
