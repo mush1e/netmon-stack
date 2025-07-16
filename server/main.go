@@ -2,8 +2,14 @@ package main
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
+
+type server struct {
+	devices map[string]*Device
+	mutex   sync.RWMutex
+}
 
 func main() {
 	// Create a device
@@ -11,6 +17,14 @@ func main() {
 
 	device.AddInterface("eth0")
 	device.AddInterface("eth1")
+
+	// Will work on gRPC server stuff later
+	// server := &server{
+	// 	devices: map[string]*Device{
+	// 		"router1": device,
+	// 		"switch1": NewDevice("switch1"),
+	// 	},
+	// }
 
 	device.StartCounterUpdates()
 
