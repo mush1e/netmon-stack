@@ -1,4 +1,4 @@
-package server
+package main
 
 import (
 	"errors"
@@ -76,4 +76,14 @@ func (d *Device) GetCounters(interfaceName string) (*proto.InterfaceCounters, er
 		}, nil
 	}
 	return nil, errors.New("invalid interface name")
+}
+
+// spawns a go routine to simulate network traffic on interfaces
+func (d *Device) StartCounterUpdates() {
+	go func() {
+		for {
+			d.UpdateCounters()
+			time.Sleep(time.Millisecond * 100)
+		}
+	}()
 }
