@@ -4,7 +4,9 @@ import (
 	"errors"
 	"log"
 	"net"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/mush1e/netmon-stack/proto"
 	"google.golang.org/grpc"
@@ -20,14 +22,82 @@ type server struct {
 }
 
 func (s *server) Subscribe(req *proto.SubscribeRequest, stream proto.NetworkTelemetry_SubscribeServer) error {
-	// streaming logic
-	return nil
+	nameSlice := strings.Split(req.InterfaceName, ":")
+	if len(nameSlice) != 2 {
+		return errors.New("invalid name, format should be DEVICE:INTERFACE")
+	}
+	deviceName := nameSlice[0]
+	ifaceName := nameSlice[1]
+
+	device := s.getDevice(deviceName)
+	if device == nil {
+		return errors.New("device with name: " + deviceName + " does not exist")
+	}
+
+	interval := time.Duration(req.IntervalMs) * time.Millisecond
+	if interval <= 0 {
+		interval = 1000 * time.Millisecond // default to 1s if not specified or invalid
+	}
+
+	switch req.Mode {
+	case proto.SubscriptionMode_ONCE:
+		ifaceCounters, err := device.GetCounters(ifaceName)
+		if err != nil {
+			return err
+		}
+		resp := &proto.SubscribeResponse{
+			Response: &proto.SubscribeResponse_Counters{
+				Counters: ifaceCounters,
+			},
+			ResponseTimestamp: time.Now().UnixMilli(),
+		}
+		return stream.Send(resp)
+
+	case proto.SubscriptionMode_STREAM:
+		for {
+			select {
+			case <-stream.Context().Done():
+				return nil
+			default:
+				ifaceCounters, err := device.GetCounters(ifaceName)
+				if err != nil {
+					return err
+				}
+				resp := &proto.SubscribeResponse{
+					Response: &proto.SubscribeResponse_Counters{
+						Counters: ifaceCounters,
+					},
+					ResponseTimestamp: time.Now().UnixMilli(),
+				}
+				if err := stream.Send(resp); err != nil {
+					return err
+				}
+				time.Sleep(interval)
+			}
+		}
+
+	case proto.SubscriptionMode_POLL:
+		return errors.New("POLL mode not implemented")
+
+	default:
+		return errors.New("invalid subscription mode")
+	}
 }
 
 func NewServer() *server {
 	return &server{
 		devices: make(map[string]*Device),
 	}
+}
+
+func (s *server) getDevice(deviceName string) *Device {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	if _, ok := s.devices[deviceName]; ok {
+		return s.devices[deviceName]
+	}
+	return nil
 }
 
 func (s *server) addDevice(deviceName string) (*Device, error) {
@@ -63,7 +133,7 @@ func main() {
 	}
 	srv.mutex.RUnlock()
 
-	listener, err := net.Listen("tcp", ":500051")
+	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatal(err.Error())
 	}
