@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+message InterfaceCounters {
+    string interface_name = 1;
+    int64 bytes_rx = 2;
+    int64 bytes_tx = 3;
+    int64 packets_rx = 4;
+    int64 packets_tx = 5;
+    int32 timestamp = 6;
+}
+
+enum SubscriptionMode {
+    STREAM = 0;
+    ONCE = 1;
+    POLL = 2;
+}
+
+message SubscribeRequest {
+    string interface_name = 1;
+    int32 interval_ms = 2;
+    SubscriptionMode mode = 3;
+}
+
+enum ErrorCode {
+    DOES_NOT_EXIST = 0;
+    PERMISSION_DENIED = 1;
+    NOT_ACTIVE = 2;
+}
+
+message Error {
+    ErrorCode code = 1;
+    string message = 2;
+}
+
+message SubscribeResponse {
+    oneof response {
+        InterfaceCounters counters = 1;
+        Error error = 2;
+    }
+    int64 response_timestamp = 3;
+}
+
+
+// Always returns stream, but:
+// STREAM mode → continuous updates
+// ONCE mode → single message then closes stream
+service NetworkTelemetry {
+    rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+}
