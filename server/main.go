@@ -1,9 +1,9 @@
 package main
 
 import (
-	"fmt"
+	"errors"
+	"log"
 	"sync"
-	"time"
 )
 
 type server struct {
@@ -11,28 +11,42 @@ type server struct {
 	mutex   sync.RWMutex
 }
 
-func main() {
-	// Create a device
-	device := NewDevice("router1")
-
-	device.AddInterface("eth0")
-	device.AddInterface("eth1")
-
-	// Will work on gRPC server stuff later
-	// server := &server{
-	// 	devices: map[string]*Device{
-	// 		"router1": device,
-	// 		"switch1": NewDevice("switch1"),
-	// 	},
-	// }
-
-	device.StartCounterUpdates()
-
-	for i := 0; i < 10; i++ {
-		time.Sleep(time.Second)
-
-		counters, _ := device.GetCounters("eth0")
-		fmt.Printf("eth0 - RX: %d bytes, TX: %d bytes\n",
-			counters.BytesRx, counters.BytesTx)
+func NewServer() *server {
+	return &server{
+		devices: make(map[string]*Device),
 	}
+}
+
+func (s *server) addDevice(deviceName string) (*Device, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if _, ok := s.devices[deviceName]; ok {
+		return nil, errors.New("device already exists on server")
+	}
+	s.devices[deviceName] = NewDevice(deviceName)
+	return s.devices[deviceName], nil
+}
+
+func main() {
+	srv := NewServer()
+	if dev, err := srv.addDevice("router1"); err == nil {
+		dev.AddInterface("eth0")
+		dev.AddInterface("eth1")
+		dev.AddInterface("eth2")
+	} else {
+		log.Printf("router1 already exists")
+	}
+
+	if dev, err := srv.addDevice("switch1"); err == nil {
+		dev.AddInterface("gi0/0")
+		dev.AddInterface("gi0/1")
+	} else {
+		log.Printf("switch1 already exists")
+	}
+
+	srv.mutex.RLock()
+	for _, device := range srv.devices {
+		device.StartCounterUpdates()
+	}
+	srv.mutex.RUnlock()
 }
