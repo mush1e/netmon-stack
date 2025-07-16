@@ -3,12 +3,25 @@ package main
 import (
 	"errors"
 	"log"
+	"net"
 	"sync"
+
+	"github.com/mush1e/netmon-stack/proto"
+	"google.golang.org/grpc"
 )
 
 type server struct {
+	// For default stuff belonging to NetworkTelemetry server
+	proto.UnimplementedNetworkTelemetryServer
+
+	// devices and mtx
 	devices map[string]*Device
 	mutex   sync.RWMutex
+}
+
+func (s *server) Subscribe(req *proto.SubscribeRequest, stream proto.NetworkTelemetry_SubscribeServer) error {
+	// streaming logic
+	return nil
 }
 
 func NewServer() *server {
@@ -49,4 +62,18 @@ func main() {
 		device.StartCounterUpdates()
 	}
 	srv.mutex.RUnlock()
+
+	listener, err := net.Listen("tcp", "500051")
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	grpcServer := grpc.NewServer()
+	proto.RegisterNetworkTelemetryServer(grpcServer, srv)
+
+	log.Println("Starting gRPC server on :50051")
+	if err := grpcServer.Serve(listener); err != nil {
+		log.Fatal(err.Error())
+	}
+
 }
