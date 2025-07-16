@@ -63,7 +63,7 @@ func main() {
 	}
 	srv.mutex.RUnlock()
 
-	listener, err := net.Listen("tcp", "500051")
+	listener, err := net.Listen("tcp", ":500051")
 	if err != nil {
 		log.Fatal(err.Error())
 	}
